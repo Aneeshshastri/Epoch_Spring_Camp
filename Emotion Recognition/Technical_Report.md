@@ -1,222 +1,267 @@
 # Technical Report: Multimodal Emotion Recognition on RAVDESS
 
-## 1. Overview
+## 1. Objective
 
-This report documents the multimodal emotion recognition pipeline implemented in [Emotion_Recognition.ipynb](./Emotion_Recognition.ipynb). The notebook builds three model variants on the RAVDESS speech dataset:
+This report summarizes the model design, training behavior, and evaluation results from [Emotion_Recognition.ipynb](./Emotion_Recognition.ipynb). The notebook builds and evaluates three emotion-recognition models on the RAVDESS speech dataset:
 
-1. `EmotionCNN (Audio)` for mel-spectrogram based speech emotion recognition
-2. `TextRNN` for transcript-based classification
-3. `Late Fusion` for combining the audio and text predictions
+1. `EmotionCNN (Audio)`
+2. `TextRNN`
+3. `Late Fusion`
 
-The code uses JAX, Flax `nnx`, Optax, Librosa, Whisper, and a custom C++ BPE tokenizer. The evaluation protocol is centered on Leave-One-Subject-Out (LOSO) validation so that performance reflects cross-speaker generalization rather than memorization of actor-specific vocal traits.
+The goal is to classify each speech sample into one of eight emotions:
+
+- neutral
+- calm
+- happy
+- sad
+- angry
+- fearful
+- disgust
+- surprised
 
 ## 2. Dataset and Preprocessing
 
-- Dataset: RAVDESS speech subset with `1440` audio files
-- Classes: `8` emotions
-  - neutral
-  - calm
-  - happy
-  - sad
-  - angry
-  - fearful
-  - disgust
-  - surprised
-- Input duration: audio is padded or truncated to `3.0 s`
-- Audio representation: `128`-bin log-mel spectrograms
-- Text representation: Whisper transcripts encoded with a custom BPE tokenizer
+### Dataset
 
-### Preprocessing Summary
+- Dataset: RAVDESS speech audio subset
+- Total files parsed: `1440`
+- Number of emotion classes: `8`
 
-**Audio branch**
+### Audio preprocessing
 
-- Resample to `22,050 Hz`
-- Compute mel spectrogram with:
-  - `n_fft = 1024`
-  - `hop_length = 256`
-  - `n_mels = 128`
-  - `fmin = 50`
-  - `fmax = 8000`
-- Convert power spectrogram to dB
-- Min-max normalize
-- Cache each spectrogram to disk as `.npy`
+Each `.wav` file is converted into a normalized log-mel spectrogram:
 
-**Text branch**
+- sampling rate: `22050 Hz`
+- clip length: `3.0 s`
+- `n_fft = 1024`
+- `hop_length = 256`
+- `n_mels = 128`
+- `fmin = 50`
+- `fmax = 8000`
 
-- Transcribe each audio file with Whisper
-- Train/use a custom BPE tokenizer
-- Encode transcripts into token IDs
-- Pad all sequences to a fixed maximum length for JAX/XLA compatibility
+This produces:
 
-## 3. Evaluation Protocol
+- `X_audio shape = (1440, 128, 259, 1)`
 
-The notebook uses two evaluation setups:
+### Text preprocessing
 
-1. An initial random split:
-   - `80%` train+validation, `20%` test
-   - followed by a `90/10` split inside the train+validation portion
-2. A final `LOSO` evaluation:
-   - one actor held out as test
-   - one different actor held out as validation
-   - remaining `22` actors used for training
+The notebook transcribes all audio samples using Whisper and then tokenizes the transcripts with a custom C++ BPE tokenizer.
 
-This LOSO design is a strong choice for RAVDESS because emotion recognition systems can otherwise overfit to speaker identity. The notebook also applies class-weighted loss because the neutral class is underrepresented.
+Recovered notebook outputs:
 
-## 4. Architecture Diagram
+- total characters in corpus: `43347`
+- learned vocabulary size: `446`
+- maximum padded text length: `12` tokens
+
+This produces:
+
+- `X_text shape = (1440, 12)`
+
+### Initial split
+
+The first experiment uses a standard train/validation/test split:
+
+- train: `1036`
+- validation: `116`
+- test: `288`
+
+## 3. Architecture Diagram
 
 ```mermaid
 flowchart LR
     A[RAVDESS WAV files] --> B[Parse labels and actor IDs]
-    B --> C1[Audio preprocessing]
-    B --> C2[Whisper transcription]
+    B --> C1[Audio branch]
+    B --> C2[Text branch]
 
-    C1 --> D1[3 s waveform normalization]
+    C1 --> D1[Pad or trim to 3.0 s]
     D1 --> E1[128-bin log-mel spectrogram]
-    E1 --> F1[SpecAugment]
-    F1 --> G1[1D CNN block 1<br/>Conv-BN-GELU-MaxPool]
-    G1 --> H1[1D CNN block 2<br/>Conv-BN-GELU-MaxPool]
-    H1 --> I1[1D CNN block 3<br/>Conv-BN-GELU-MaxPool]
-    I1 --> J1[Global max pooling]
-    J1 --> K1[Linear 256->128]
-    K1 --> L1[Dropout 0.3]
-    L1 --> M1[Linear 128->64]
-    M1 --> N1[Audio logits 8]
+    E1 --> F1[Normalize]
+    F1 --> G1[SpecAugment]
+    G1 --> H1[Conv1D block 1<br/>128 -> 64]
+    H1 --> I1[Conv1D block 2<br/>64 -> 128]
+    I1 --> J1[Conv1D block 3<br/>128 -> 256]
+    J1 --> K1[Global max pool]
+    K1 --> L1[Linear 256 -> 128]
+    L1 --> M1[Dropout 0.3]
+    M1 --> N1[Linear 128 -> 64]
+    N1 --> O1[Linear 64 -> 8 logits]
 
-    C2 --> D2[Custom BPE tokenizer]
-    D2 --> E2[Embedding 64]
-    E2 --> F2[GRU hidden 128]
-    F2 --> G2[Masked mean pooling]
-    G2 --> H2[Dropout 0.3]
-    H2 --> I2[Linear 128->8]
-    I2 --> J2[Text logits 8]
+    C2 --> D2[Whisper transcription]
+    D2 --> E2[Custom BPE tokenizer]
+    E2 --> F2[Embedding 64]
+    F2 --> G2[GRU hidden 128]
+    G2 --> H2[Masked mean pooling]
+    H2 --> I2[Dropout 0.3]
+    I2 --> J2[Linear 128 -> 8 logits]
 
-    N1 --> K3[Softmax]
+    O1 --> K3[Softmax]
     J2 --> L3[Softmax]
     K3 --> M3[Late fusion]
     L3 --> M3
     M3 --> N3[Learned scalar alpha]
-    N3 --> O3[Fused class probabilities]
+    N3 --> O3[Fused probabilities]
 ```
 
-## 5. Design Rationale
+## 4. Why These Design Choices Were Made
 
-### Why log-mel spectrograms?
+### Why use log-mel spectrograms?
 
-Emotion in speech is often carried by spectral shape, energy, and temporal prosody. Log-mel spectrograms preserve this information while remaining compact and well-suited to convolutional processing.
+Emotion in speech is mostly carried by prosody, energy variation, and spectral structure. Log-mel spectrograms preserve those cues in a compact representation that is well suited for convolutional processing.
 
-### Why a 1D CNN for audio?
+### Why a 1D CNN for the audio branch?
 
-The audio model treats the spectrogram as a time sequence with `128` mel features per step. This keeps the model lighter than a 2D CNN, which is helpful because RAVDESS is relatively small. The architecture emphasizes temporal pattern extraction while preserving a manageable parameter count.
+The spectrogram is treated as a sequence over time with `128` mel features per frame. A 1D CNN is lighter than a full 2D CNN and is a reasonable fit for a relatively small dataset like RAVDESS. It captures temporal speech patterns while keeping the model compact.
 
 ### Why SpecAugment?
 
-RAVDESS is limited in size, so overfitting is a real risk. Frequency and time masking provide simple but effective regularization by forcing the audio branch to rely on distributed cues instead of narrow local artifacts.
+The dataset is small, so overfitting is a major risk. Frequency masking and time masking regularize the audio model by preventing it from depending too heavily on narrow local patterns.
 
-### Why a GRU-based text model?
+### Why a GRU text model?
 
-The text branch exists to test whether transcript content adds any useful signal. A GRU with masked mean pooling is computationally cheap, sequence-aware, and appropriate for short transcriptions.
+The text branch tests whether lexical information helps. A GRU is simple, sequence-aware, and cheap to train. Masked mean pooling lets the model ignore padding tokens.
 
-### Why late fusion instead of early fusion?
+### Why late fusion?
 
-The notebook explicitly notes that text is weak for this dataset because actors only speak two fixed sentences. A learned scalar late-fusion weight is therefore a sensible design:
-
-- it keeps the fusion module interpretable
-- it limits overfitting
-- it allows the model to down-weight the unreliable text branch automatically
+The notebook’s own observation is correct: RAVDESS uses only two fixed spoken sentences, so transcript content carries almost no emotion information. Late fusion is a safe design because it can learn to trust the audio branch much more than the text branch. That is exactly what happened during training.
 
 ### Why class-weighted loss?
 
-The neutral class has fewer examples than the others. Inverse-frequency class weights help reduce bias toward overrepresented emotions during both optimization and weighted accuracy reporting.
+The neutral class is underrepresented, so inverse-frequency class weighting helps reduce bias toward the larger classes during optimization and reporting.
 
-### Why LOSO instead of only a random split?
+### Why LOSO evaluation?
 
-Speaker leakage is a major concern in speech emotion recognition. LOSO tests whether the model generalizes to unseen actors, which is a more realistic measure of robustness than a random file-level split.
+Random splits can leak speaker identity. Leave-One-Subject-Out evaluation tests whether the model learns emotion-related cues that generalize to unseen actors instead of memorizing actor-specific speaking style.
 
-## 6. Model Summary
+## 5. Model Details
 
-| Model | Input | Core architecture | Output |
-|---|---|---|---|
-| EmotionCNN (Audio) | `(128, T, 1)` log-mel spectrogram | SpecAugment -> 3 x Conv1D blocks -> global max pool -> MLP | 8-class logits |
-| TextRNN | padded BPE token IDs | Embedding -> GRU -> masked mean pooling -> linear classifier | 8-class logits |
-| Late Fusion | audio and text probabilities | learned scalar mixing weight `alpha` | fused class probabilities |
+| Model | Main components | Notes |
+|---|---|---|
+| EmotionCNN (Audio) | SpecAugment -> 3 Conv1D blocks -> global max pooling -> MLP | Primary model |
+| TextRNN | Embedding -> GRU -> masked mean pooling -> classifier | Weak modality on this dataset |
+| Late Fusion | Convex combination of audio and text probabilities using learned scalar `alpha` | Lets model down-weight text branch |
 
-## 7. Results Table
+## 6. Training Behavior
 
-The checked-in notebook contains the full training and LOSO evaluation code, but the committed `.ipynb` snapshot does **not** preserve the runtime outputs for the training and evaluation cells. Because of that, the exact final `Accuracy` and `F1-score` values cannot be recovered faithfully from the repository alone.
+### Audio model
 
-To keep this report technically honest, the table below records what can be concluded from the notebook source and markdown commentary without inventing numbers.
+- trained for up to `300` epochs
+- early stopping triggered at epoch `134`
+- best weights restored from epoch `84` with `val_loss = 0.5886`
 
-| Model | Accuracy | F1-score | Evidence from notebook |
-|---|---:|---:|---|
-| EmotionCNN (Audio) | Not recoverable from saved notebook outputs | Not recoverable from saved notebook outputs | Implemented as the main strong branch and used as the anchor model for fusion |
-| TextRNN | Not recoverable from saved notebook outputs | Not recoverable from saved notebook outputs | Notebook commentary says this branch is "pretty useless" on RAVDESS because transcript content carries almost no emotion signal |
-| Late Fusion | Not recoverable from saved notebook outputs | Not recoverable from saved notebook outputs | Fusion is designed to learn a scalar weight that should heavily favor the audio branch |
+The audio branch shows clear convergence: training loss steadily falls, validation loss improves substantially, and validation weighted accuracy rises from roughly `0.13` at the start to above `0.80` at its best points.
 
-### Qualitative Interpretation
+### Text model
 
-- The audio model is the intended primary performer.
-- The text model is expected to be near chance because both spoken sentences are largely emotion-independent.
-- The fused model is expected to track the audio model closely, because the learned fusion weight should assign most of the mass to the audio branch.
+- trained for up to `100` epochs
+- early stopping triggered at epoch `20`
+- best weights restored from epoch `0` with `val_loss = 2.0082`
 
-## 8. Training and Validation Loss Plots
+The text branch fails to learn meaningful structure. Its validation loss barely improves and quickly plateaus, which matches the dataset limitation that the transcript content is almost constant across emotions.
 
-The notebook defines a plotting utility called `plot_training_histories(...)` and records loss histories in:
+## 7. Training and Validation Loss Plots
 
-- `audio_history`
-- `text_history`
+The notebook saved the initial split loss plot, extracted here:
 
-However, the committed notebook snapshot does not store the populated loss arrays or the rendered plot outputs for the training cells. As a result, the exact loss curves cannot be reconstructed from the repository contents alone.
+![Training and Validation Loss](./report_assets/training_validation_loss.png)
 
-### Intended Plot Coverage
+### Interpretation
 
-Once the notebook is rerun with outputs preserved, the report should include:
+- `EmotionCNN (Audio)` converges well and achieves a much lower validation loss than at initialization.
+- `TextRNN` shows almost no useful learning signal and stays close to its starting loss.
+- The dashed vertical marker in each subplot indicates the restored best epoch from early stopping.
 
-1. Audio model training loss vs. validation loss per epoch
-2. Text model training loss vs. validation loss per epoch
+## 8. Results Table
 
-### Expected Behavior of the Curves
+The notebook reports two useful evaluation views:
 
-- `EmotionCNN (Audio)` should show meaningful convergence with early stopping based on validation loss.
-- `TextRNN` is likely to overfit quickly or plateau because the transcript signal is weak.
+1. an initial held-out test split for the standalone audio and text models
+2. final LOSO aggregate metrics for all three model types
 
-## 9. Reproducibility Notes
+All F1 values below are the notebook’s **weighted F1-score**.
 
-### Key hyperparameters
+### 8.1 Initial Held-Out Test Split
 
-- `BATCH_SIZE = 32`
-- Audio optimizer: AdamW with warmup cosine decay, weight decay `1e-4`
-- Text optimizer: AdamW with warmup cosine decay, weight decay `1e-4`
-- Audio early stopping patience: `50` for initial split, `30` in LOSO
-- Text early stopping patience: `20` for initial split, `10` in LOSO
-- Fusion optimizer: Adam with learning rate `1e-2`
+| Model | Accuracy | Weighted Accuracy | F1-score | Weighted Loss |
+|---|---:|---:|---:|---:|
+| EmotionCNN (Audio) | `0.7153` | `0.7132` | `0.7129` | `0.8050` |
+| TextRNN | `0.0868` | `0.1022` | `0.0399` | `1.9868` |
 
-### Notebook execution metadata
+The gap is dramatic. Even on a standard random split, the text model is nearly unusable, while the audio model performs well.
 
-The notebook metadata indicates a successful Kaggle run on `2026-05-10`, but the saved cell outputs for the training/evaluation sections were stripped before this repository snapshot was committed.
+### 8.2 Final LOSO Aggregate Comparison Across All 3 Models
 
-## 10. Conclusion
+| Model | Accuracy | Weighted Accuracy | F1-score | Precision | Recall |
+|---|---:|---:|---:|---:|---:|
+| EmotionCNN (Audio) | `0.6076` | `0.6061` | `0.6048` | `0.6067` | `0.6076` |
+| TextRNN | `0.0271` | `0.0326` | `0.0201` | `0.0179` | `0.0271` |
+| Late Fusion | `0.6076` | `0.6061` | `0.6048` | `0.6067` | `0.6076` |
 
-The notebook implements a sensible multimodal pipeline for RAVDESS, but its own design notes make the central finding clear: this dataset is dominated by acoustic emotion cues, not lexical content. The architecture reflects that reality well:
+### 8.3 LOSO Mean Weighted Accuracy
 
-- a regularized CNN is used as the main speech model
-- a lightweight GRU tests the text modality
-- a scalar late-fusion layer prevents the weak text branch from hurting performance too much
+| Model | Mean LOSO Weighted Accuracy |
+|---|---:|
+| EmotionCNN (Audio) | `0.6061` |
+| TextRNN | `0.0326` |
+| Late Fusion | `0.6061` |
 
-From a methodological standpoint, the strongest decisions in the notebook are the use of LOSO evaluation, class-weighted training, and a conservative late-fusion strategy.
+## 9. Fusion Analysis
 
-## 11. Finalization Checklist
+The fusion model was trained on pooled validation logits from all LOSO folds.
 
-To turn this into a fully numeric final report, rerun the notebook and preserve outputs from these sections:
+Recovered notebook outputs:
 
-1. Cell `21`: audio training
-2. Cell `23`: text training
-3. Cell `24`: initial test-set evaluation and loss plots
-4. Cell `26`: LOSO audio/text evaluation
-5. Cell `28`: fusion training and learned `alpha`
-6. Cell `29`: fused LOSO evaluation and aggregate metrics
+- fusion epoch `1`: loss `1.7738`, `alpha = 0.5025`
+- fusion epoch `100`: loss `1.6918`, `alpha = 0.7226`
+- fusion epoch `200`: loss `1.6473`, `alpha = 0.8473`
+- fusion epoch `300`: loss `1.6267`, `alpha = 0.9067`
+- fusion epoch `400`: loss `1.6163`, `alpha = 0.9372`
+- fusion epoch `500`: loss `1.6104`, `alpha = 0.9547`
 
-Once those outputs are available, the placeholders in Sections 7 and 8 can be replaced with:
+Final learned fusion weight:
 
-- aggregate LOSO accuracy for all three models
-- aggregate weighted F1-score for all three models
-- the rendered loss plots from `plot_training_histories(...)`
+- `alpha = 0.9547`
+- audio contribution: `95.47%`
+- text contribution: `4.53%`
+
+This explains why the fused model ends up with the same aggregate metrics as the audio model. The fusion layer learned that the text branch adds almost no useful signal and therefore placed almost all weight on audio.
+
+## 10. Discussion
+
+### What worked
+
+- The audio pipeline is strong and stable.
+- LOSO evaluation gives a more realistic picture of generalization across speakers.
+- SpecAugment and early stopping helped the CNN avoid severe overfitting.
+- Late fusion behaved exactly as intended by automatically suppressing the weak modality.
+
+### What failed
+
+- The text branch is not informative for this dataset.
+- Because RAVDESS reuses only two fixed spoken sentences, transcript content does not meaningfully encode emotion.
+- The GRU ends up modeling transcription noise and trivial lexical variation rather than emotion.
+
+### Main takeaway
+
+For this particular problem, the system is effectively an **audio-first model**. The multimodal setup is still useful as an experiment because it proves, quantitatively, that text contributes almost nothing here. The final fusion weight of `0.9547` is the clearest evidence of that conclusion.
+
+## 11. Conclusion
+
+The notebook implements a well-designed multimodal experiment, but the final result is straightforward:
+
+- the `EmotionCNN` is the only genuinely effective classifier
+- the `TextRNN` performs near chance
+- `Late Fusion` learns to copy the audio model almost exactly
+
+The most important final numbers from the report are the LOSO aggregate results:
+
+- `EmotionCNN`: `Accuracy = 0.6076`, `F1 = 0.6048`
+- `TextRNN`: `Accuracy = 0.0271`, `F1 = 0.0201`
+- `Late Fusion`: `Accuracy = 0.6076`, `F1 = 0.6048`
+
+That makes the central conclusion clear: on RAVDESS speech emotion recognition, acoustic features dominate, while transcript text adds almost no predictive value.
+
+## 12. Appendix
+
+The notebook also saved LOSO confusion-matrix heatmaps, extracted here for reference:
+
+![LOSO Confusion Heatmaps](./report_assets/loso_confusion_heatmaps.png)
