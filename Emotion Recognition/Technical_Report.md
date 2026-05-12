@@ -59,7 +59,7 @@ This produces:
 
 ### Initial split
 
-The first experiment uses a standard train/validation/test split:
+The first experiment uses a standard random stratified train/validation/test split:
 
 - train: `1036`
 - validation: `116`
@@ -110,27 +110,36 @@ Emotion in speech is mostly carried by prosody, energy variation, and spectral s
 
 ### Why a 1D CNN for the audio branch?
 
-The spectrogram is treated as a sequence over time with `128` mel features per frame. A 1D CNN is lighter than a full 2D CNN and is a reasonable fit for a relatively small dataset like RAVDESS. It captures temporal speech patterns while keeping the model compact.
+The spectrogram is treated as a sequence over time with `128` mel features per frame. A 1D CNN is lighter than a full 2D CNN and is a reasonable fit for a relatively small dataset like RAVDESS. It avoids severe overfitting, and also treats features differently at different frequencies.
+(The same disturbance or feature may mean something entirely different at 60Hz while compared to 6000Hz. 1D CNNs don't pass the same kernel over different frequencies, thus preserving the difference)
 
 ### Why SpecAugment?
 
 The dataset is small, so overfitting is a major risk. Frequency masking and time masking regularize the audio model by preventing it from depending too heavily on narrow local patterns.
 
+Modifying the Audio file itself, by either adding guassian noise or distorting the pitch are also valid choices, but they are incompatible with my current pipeline, Since techincally all actors are part of my test data, modifying any audio file before-hand is modifying the test files, which is unaccaptable. Seperating the training and testing actors entirely might work, but is still kind of an objective mismatch if the same data is missing.
+
+The correct method to modify Audio files would have been to create a dedicated dataloader and modify them there, but this is computationally expensive and will introduce a major CPU bottlneck
+
 ### Why a GRU text model?
 
 The text branch tests whether lexical information helps. A GRU is simple, sequence-aware, and cheap to train. Masked mean pooling lets the model ignore padding tokens.
 
+Using An LSTM for input that is at maximum only 12 tokens long is massive overkill. Even more so for transformers. 
+
 ### Why late fusion?
 
-The notebook's own observation is correct: RAVDESS uses only two fixed spoken sentences, so transcript content carries almost no emotion information. Late fusion is a safe design because it can learn to trust the audio branch much more than the text branch. That is exactly what happened during training.
+Late fusion was more about damage control for this specific dataset rather than the optimal choice in general. As you've seen on my note on the RNN model, the Text RNN model is completely useless for this dataset. So a fusion that performs best is a fusion that takes minimum influence from the RNN model. Late fusion practically ensures the learned weights will be overwhelmingly favour the Audio model instead of the text model, threby giving nearly the same performance as the Audio model.
+
+This is a safe choice. Any other kind of fusion will likely result in the fused model under-performing.
 
 ### Why class-weighted loss?
 
-The neutral class is underrepresented, so inverse-frequency class weighting helps reduce bias toward the larger classes during optimization and reporting.
+The neutral class is underrepresented, so inverse-frequency class weighting helps reduce bias toward the larger classes during training and reporting.
 
 ### Why LOSO evaluation?
 
-Random splits can leak speaker identity. Leave-One-Subject-Out evaluation tests whether the model learns emotion-related cues that generalize to unseen actors instead of memorizing actor-specific speaking style.
+Random splits can leak speaker identity. This was chosen instead of a random split evaluation as the model should find generalised features of an emotion, and not actor specific features. Everyone expresses emotion a little differently, and I'm doing this so the model doesn't learn to first identify the actor then search for actor-specific emotion features, instead of learning features that are related to the emotion in general.
 
 ## 5. Model Details
 
@@ -156,11 +165,10 @@ The audio branch shows clear convergence: training loss steadily falls, validati
 - early stopping triggered at epoch `24`
 - best weights restored from epoch `4` with `val_loss = 1.9839`
 
-The text branch fails to learn meaningful structure. Its validation loss barely improves and quickly plateaus, which matches the dataset limitation that the transcript content is almost constant across emotions.
+The text branch fails to learn meaningful structure. Its validation loss doesn't show a consistent trend and is likely just random noise, which matches the dataset limitation that the transcript content is almost constant across emotions.
 
 ## 7. Training and Validation Loss Plots
 
-The notebook saved the initial split loss plot, extracted here:
 
 ![Training and Validation Loss](./report_assets/training_validation_loss.png)
 
@@ -177,7 +185,7 @@ The notebook reports two useful evaluation views:
 1. an initial held-out test split for the standalone audio and text models
 2. final LOSO aggregate metrics for all three model types
 
-All F1 values below are the notebook's **weighted F1-score**.
+All F1 values below are  a **macro F1-score**.
 
 ### 8.1 Initial Held-Out Test Split
 
@@ -207,8 +215,6 @@ The gap is dramatic. Even on a standard random split, the text model is nearly u
 ## 9. Fusion Analysis
 
 The fusion model was trained on pooled validation logits from all LOSO folds.
-
-Recovered notebook outputs:
 
 - fusion epoch `1`: loss `1.7769`, `alpha = 0.5025`
 - fusion epoch `100`: loss `1.6962`, `alpha = 0.7226`
@@ -240,13 +246,7 @@ This explains why the fused model ends up with the same aggregate metrics as the
 - Because RAVDESS reuses only two fixed spoken sentences, transcript content does not meaningfully encode emotion.
 - The GRU ends up modeling transcription noise and trivial lexical variation rather than emotion.
 
-### Main takeaway
-
-For this particular problem, the system is effectively an **audio-first model**. The multimodal setup is still useful as an experiment because it proves, quantitatively, that text contributes almost nothing here. The final fusion weight of `0.9547` is the clearest evidence of that conclusion.
-
 ## 11. Conclusion
-
-The notebook implements a well-designed multimodal experiment, but the final result is straightforward:
 
 - the `EmotionCNN` is the only genuinely effective classifier
 - the `TextRNN` performs near chance
@@ -258,10 +258,9 @@ The most important final numbers from the report are the LOSO aggregate results:
 - `TextRNN`: `Accuracy = 0.0271`, `F1 = 0.0215`
 - `Late Fusion`: `Accuracy = 0.5896`, `F1 = 0.5833`
 
-That makes the central conclusion clear: on RAVDESS speech emotion recognition, acoustic features dominate, while transcript text adds almost no predictive value.
-
-## 12. Appendix
-
-The notebook also saved LOSO confusion-matrix heatmaps, extracted here for reference. The image below was refreshed from the current notebook output and exported at a larger resolution for readability:
-
 <img src="./report_assets/loso_confusion_heatmaps.png" alt="LOSO Confusion Heatmaps" width="1400" />
+
+### Note: a short analysis of the confusion matrix 
+Here are the actual emotions, and the emotions the model confuses them with the most 
+
+
