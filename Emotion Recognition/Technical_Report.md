@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-This report summarizes the model design, training behavior, and evaluation results from [Emotion_Recognition.ipynb](./Emotion_Recognition.ipynb). The notebook builds and evaluates three emotion-recognition models on the RAVDESS speech dataset:
+This report summarizes the model design, training behavior, and evaluation results from [Emotion_Recognition.ipynb](./Emotion_Recognition.ipynb). This notebook builds and evaluates three emotion-recognition models on the RAVDESS speech dataset:
 
 1. `EmotionCNN (Audio)`
 2. `TextRNN`
@@ -47,7 +47,6 @@ This produces:
 
 The notebook transcribes all audio samples using Whisper and then tokenizes the transcripts with a custom C++ BPE tokenizer.
 
-Recovered notebook outputs:
 
 - total characters in corpus: `43347`
 - learned vocabulary size: `446`
@@ -261,6 +260,17 @@ The most important final numbers from the report are the LOSO aggregate results:
 <img src="./report_assets/loso_confusion_heatmaps.png" alt="LOSO Confusion Heatmaps" width="1400" />
 
 ### Note: a short analysis of the confusion matrix 
-Here are the actual emotions, and the emotions the model confuses them with the most 
+Here are the actual emotions, and the emotions the fused model confuses them with the most 
 
+01: Neutral -> Calm followed closely by sadness \
+02: Calm -> Sadness, followed by Neutral  \
+03: Happy -> Fearful!? , followed closely by Surprised \
+04: Sadness -> Disgust, followed by Calm \
+05: Anger -> Disgust, followed by Surprise \
+06:Fearful -> Surprised, followed closely by Sad \
+07: Disgust-> Anger, followed by Sadness \
+08: Surprised -> fearful, followed by anger
 
+The Fact that for the most part, the model confuses emotions that I as a human personally think are similar is a good sign.
+
+The model seems to be Most effective in predicting Disgust, Anger and Calm, while least effective for happy,sad and neutral emotions.
