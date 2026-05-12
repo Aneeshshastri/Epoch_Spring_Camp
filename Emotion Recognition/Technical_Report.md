@@ -122,7 +122,7 @@ The text branch tests whether lexical information helps. A GRU is simple, sequen
 
 ### Why late fusion?
 
-The notebook’s own observation is correct: RAVDESS uses only two fixed spoken sentences, so transcript content carries almost no emotion information. Late fusion is a safe design because it can learn to trust the audio branch much more than the text branch. That is exactly what happened during training.
+The notebook's own observation is correct: RAVDESS uses only two fixed spoken sentences, so transcript content carries almost no emotion information. Late fusion is a safe design because it can learn to trust the audio branch much more than the text branch. That is exactly what happened during training.
 
 ### Why class-weighted loss?
 
@@ -145,16 +145,16 @@ Random splits can leak speaker identity. Leave-One-Subject-Out evaluation tests 
 ### Audio model
 
 - trained for up to `300` epochs
-- early stopping triggered at epoch `134`
-- best weights restored from epoch `84` with `val_loss = 0.5886`
+- early stopping triggered at epoch `144`
+- best weights restored from epoch `94` with `val_loss = 0.8295`
 
-The audio branch shows clear convergence: training loss steadily falls, validation loss improves substantially, and validation weighted accuracy rises from roughly `0.13` at the start to above `0.80` at its best points.
+The audio branch shows clear convergence: training loss steadily falls, validation loss improves substantially, and validation weighted accuracy rises from roughly `0.13` at the start to the high `0.70s` near the end of training.
 
 ### Text model
 
 - trained for up to `100` epochs
-- early stopping triggered at epoch `20`
-- best weights restored from epoch `0` with `val_loss = 2.0082`
+- early stopping triggered at epoch `24`
+- best weights restored from epoch `4` with `val_loss = 1.9839`
 
 The text branch fails to learn meaningful structure. Its validation loss barely improves and quickly plateaus, which matches the dataset limitation that the transcript content is almost constant across emotions.
 
@@ -177,14 +177,14 @@ The notebook reports two useful evaluation views:
 1. an initial held-out test split for the standalone audio and text models
 2. final LOSO aggregate metrics for all three model types
 
-All F1 values below are the notebook’s **weighted F1-score**.
+All F1 values below are the notebook's **weighted F1-score**.
 
 ### 8.1 Initial Held-Out Test Split
 
 | Model | Accuracy | Weighted Accuracy | F1-score | Weighted Loss |
 |---|---:|---:|---:|---:|
-| EmotionCNN (Audio) | `0.7153` | `0.7132` | `0.7129` | `0.8050` |
-| TextRNN | `0.0868` | `0.1022` | `0.0399` | `1.9868` |
+| EmotionCNN (Audio) | `0.7361` | `0.7266` | `0.7187` | `0.8952` |
+| TextRNN | `0.0590` | `0.0652` | `0.0256` | `1.9843` |
 
 The gap is dramatic. Even on a standard random split, the text model is nearly unusable, while the audio model performs well.
 
@@ -192,17 +192,17 @@ The gap is dramatic. Even on a standard random split, the text model is nearly u
 
 | Model | Accuracy | Weighted Accuracy | F1-score | Precision | Recall |
 |---|---:|---:|---:|---:|---:|
-| EmotionCNN (Audio) | `0.6076` | `0.6061` | `0.6048` | `0.6067` | `0.6076` |
-| TextRNN | `0.0271` | `0.0326` | `0.0201` | `0.0179` | `0.0271` |
-| Late Fusion | `0.6076` | `0.6061` | `0.6048` | `0.6067` | `0.6076` |
+| EmotionCNN (Audio) | `0.5896` | `0.5905` | `0.5833` | `0.5839` | `0.5905` |
+| TextRNN | `0.0271` | `0.0326` | `0.0215` | `0.0184` | `0.0326` |
+| Late Fusion | `0.5896` | `0.5905` | `0.5833` | `0.5839` | `0.5905` |
 
 ### 8.3 LOSO Mean Weighted Accuracy
 
 | Model | Mean LOSO Weighted Accuracy |
 |---|---:|
-| EmotionCNN (Audio) | `0.6061` |
+| EmotionCNN (Audio) | `0.5905` |
 | TextRNN | `0.0326` |
-| Late Fusion | `0.6061` |
+| Late Fusion | `0.5905` |
 
 ## 9. Fusion Analysis
 
@@ -210,12 +210,12 @@ The fusion model was trained on pooled validation logits from all LOSO folds.
 
 Recovered notebook outputs:
 
-- fusion epoch `1`: loss `1.7738`, `alpha = 0.5025`
-- fusion epoch `100`: loss `1.6918`, `alpha = 0.7226`
-- fusion epoch `200`: loss `1.6473`, `alpha = 0.8473`
-- fusion epoch `300`: loss `1.6267`, `alpha = 0.9067`
-- fusion epoch `400`: loss `1.6163`, `alpha = 0.9372`
-- fusion epoch `500`: loss `1.6104`, `alpha = 0.9547`
+- fusion epoch `1`: loss `1.7769`, `alpha = 0.5025`
+- fusion epoch `100`: loss `1.6962`, `alpha = 0.7226`
+- fusion epoch `200`: loss `1.6525`, `alpha = 0.8473`
+- fusion epoch `300`: loss `1.6323`, `alpha = 0.9066`
+- fusion epoch `400`: loss `1.6220`, `alpha = 0.9371`
+- fusion epoch `500`: loss `1.6162`, `alpha = 0.9547`
 
 Final learned fusion weight:
 
@@ -254,14 +254,14 @@ The notebook implements a well-designed multimodal experiment, but the final res
 
 The most important final numbers from the report are the LOSO aggregate results:
 
-- `EmotionCNN`: `Accuracy = 0.6076`, `F1 = 0.6048`
-- `TextRNN`: `Accuracy = 0.0271`, `F1 = 0.0201`
-- `Late Fusion`: `Accuracy = 0.6076`, `F1 = 0.6048`
+- `EmotionCNN`: `Accuracy = 0.5896`, `F1 = 0.5833`
+- `TextRNN`: `Accuracy = 0.0271`, `F1 = 0.0215`
+- `Late Fusion`: `Accuracy = 0.5896`, `F1 = 0.5833`
 
 That makes the central conclusion clear: on RAVDESS speech emotion recognition, acoustic features dominate, while transcript text adds almost no predictive value.
 
 ## 12. Appendix
 
-The notebook also saved LOSO confusion-matrix heatmaps, extracted here for reference:
+The notebook also saved LOSO confusion-matrix heatmaps, extracted here for reference. The image below was refreshed from the current notebook output and exported at a larger resolution for readability:
 
-![LOSO Confusion Heatmaps](./report_assets/loso_confusion_heatmaps.png)
+<img src="./report_assets/loso_confusion_heatmaps.png" alt="LOSO Confusion Heatmaps" width="1400" />
